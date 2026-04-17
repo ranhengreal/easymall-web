@@ -14,13 +14,26 @@
           <div class="filter-box">
             <h3>商品分类</h3>
             <div class="category-tree">
-              <CategoryTreeNode
-                  v-for="cat in categories"
-                  :key="cat.categoryId"
-                  :category="cat"
-                  :current-category-id="currentCategoryId"
-                  @select="selectCategory"
-              />
+              <div v-for="cat in categories" :key="cat.categoryId" class="category-item">
+                <div
+                    class="category-name"
+                    :class="{ active: currentCategoryId === cat.categoryId }"
+                    @click="selectCategory(cat.categoryId)"
+                >
+                  {{ cat.categoryName }}
+                </div>
+                <div v-if="cat.children && cat.children.length" class="sub-categories">
+                  <div
+                      v-for="child in cat.children"
+                      :key="child.categoryId"
+                      class="sub-category-name"
+                      :class="{ active: currentCategoryId === child.categoryId }"
+                      @click="selectCategory(child.categoryId)"
+                  >
+                    {{ child.categoryName }}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -30,7 +43,7 @@
           <!-- 搜索栏 -->
           <div class="search-bar">
             <el-input
-                v-model="keyword"
+                v-model="searchKeyword"
                 placeholder="搜索商品名称"
                 prefix-icon="Search"
                 size="large"
@@ -41,30 +54,47 @@
             <el-button type="primary" size="large" @click="handleSearch">搜索</el-button>
           </div>
 
-          <!-- 排序栏 + 结果统计 -->
+          <!-- 排序栏 -->
           <div class="sort-bar">
-            <div class="sort-left">
-              <div
-                  v-for="sortOption in sortOptions"
-                  :key="sortOption.value"
-                  class="sort-item"
-                  :class="{ active: orderBy === sortOption.value }"
-                  @click="changeOrder(sortOption.value)"
-              >
-                {{ sortOption.label }}
-                <el-icon v-if="sortOption.icon === 'top'"><Top /></el-icon>
-                <el-icon v-if="sortOption.icon === 'bottom'"><Bottom /></el-icon>
-              </div>
+            <div
+                class="sort-item"
+                :class="{ active: sortType === 'default' }"
+                @click="changeSort('default')"
+            >
+              默认
+            </div>
+            <div
+                class="sort-item"
+                :class="{ active: sortType === 'price_asc' }"
+                @click="changeSort('price_asc')"
+            >
+              价格升序
+              <el-icon><Top /></el-icon>
+            </div>
+            <div
+                class="sort-item"
+                :class="{ active: sortType === 'price_desc' }"
+                @click="changeSort('price_desc')"
+            >
+              价格降序
+              <el-icon><Bottom /></el-icon>
+            </div>
+            <div
+                class="sort-item"
+                :class="{ active: sortType === 'sales' }"
+                @click="changeSort('sales')"
+            >
+              销量
             </div>
             <div class="sort-right">
-              <span class="result-count">共 {{ total }} 件商品</span>
+              共 {{ totalCount }} 件商品
             </div>
           </div>
 
           <!-- 商品网格 -->
           <div v-loading="loading" class="product-grid">
             <div
-                v-for="product in displayProducts"
+                v-for="product in displayList"
                 :key="product.productId"
                 class="product-card"
                 @click="goDetail(product.productId)"
@@ -73,46 +103,28 @@
                 <img
                     :src="getImageUrl(product.mainImage)"
                     :alt="product.productName"
-                    loading="lazy"
                     @error="handleImageError"
-                >
-                <!-- 商品标签 -->
-                <div class="product-tags">
-                  <span v-if="product.sales > 100" class="tag hot">热卖</span>
-                  <span v-if="product.isNew" class="tag new">新品</span>
-                </div>
+                />
               </div>
               <div class="product-info">
-                <h3 class="product-title">{{ product.productName }}</h3>
-                <div class="product-price">
-                  <span class="price">¥{{ product.price?.toFixed(2) }}</span>
-                  <span v-if="product.originalPrice" class="original-price">
-                    ¥{{ product.originalPrice?.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="product-meta">
-                  <span class="sales">月销 {{ formatSales(product.sales) }}</span>
-                  <span class="stock" :class="{ 'low-stock': product.stock < 10 }">
-                    {{ product.stock > 0 ? `库存 ${product.stock}` : '缺货' }}
-                  </span>
-                </div>
+                <h3>{{ product.productName }}</h3>
+                <div class="price">¥{{ formatPrice(product.price) }}</div>
+                <div class="sales">月销 {{ product.sales || 0 }} 件</div>
               </div>
             </div>
           </div>
 
           <!-- 空状态 -->
-          <el-empty v-if="!loading && displayProducts.length === 0" description="暂无商品">
-            <el-button type="primary" @click="resetFilters">重置筛选</el-button>
-          </el-empty>
+          <el-empty v-if="!loading && displayList.length === 0" description="暂无商品" />
 
           <!-- 分页 -->
-          <div v-if="total > pageSize" class="pagination">
+          <div v-if="totalCount > pageSize" class="pagination">
             <el-pagination
-                v-model:current-page="pageNum"
+                v-model:current-page="currentPage"
                 v-model:page-size="pageSize"
-                :total="total"
-                :page-sizes="[12, 24, 48, 96]"
-                layout="total, sizes, prev, pager, next, jumper"
+                :total="totalCount"
+                :page-sizes="[12, 24, 48]"
+                layout="total, sizes, prev, pager, next"
                 @current-change="handlePageChange"
                 @size-change="handleSizeChange"
             />
@@ -120,206 +132,128 @@
         </div>
       </div>
     </div>
-
-    <!-- 返回顶部按钮 -->
-    <el-backtop :right="40" :bottom="40" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Top, Bottom } from '@element-plus/icons-vue'
 import { getProductList } from '@/api/product'
 import { getCategoryTree } from '@/api/category'
 import { getImageUrl, handleImageError } from '@/utils/image'
-import CategoryTreeNode from '@/components/CategoryTreeNode.vue'
-import type { Product, Category } from '@/api/product'
 
-const route = useRoute()
 const router = useRouter()
 
 // 数据
 const loading = ref(false)
-const productList = ref<Product[]>([])
-const categories = ref<Category[]>([])
-const total = ref(0)
+const allProducts = ref<any[]>([])
+const categories = ref<any[]>([])
+const totalCount = ref(0)
 
-// 参数
-const pageNum = ref(1)
-const pageSize = ref(12)
+// 筛选参数
+const searchKeyword = ref('')
 const currentCategoryId = ref('')
 const currentCategoryName = ref('')
-const keyword = ref('')
-const orderBy = ref('default')
+const sortType = ref('default')
 
-// 排序选项配置
-const sortOptions = [
-  { label: '默认', value: 'default', icon: null },
-  { label: '价格升序', value: 'price_asc', icon: 'top' },
-  { label: '价格降序', value: 'price_desc', icon: 'bottom' },
-  { label: '销量', value: 'sales', icon: null }
-]
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(12)
 
-// 格式化销量
-const formatSales = (sales: number) => {
-  if (!sales) return '0'
-  if (sales >= 10000) return `${(sales / 10000).toFixed(1)}万`
-  return sales.toString()
-}
+// 获取所有子分类ID（包含自身）
+const getCategoryWithChildren = (catId: string): string[] => {
+  const result = [catId]
 
-// 重置筛选
-const resetFilters = () => {
-  currentCategoryId.value = ''
-  currentCategoryName.value = ''
-  keyword.value = ''
-  orderBy.value = 'default'
-  pageNum.value = 1
-}
-
-// 递归获取所有子分类ID（优化版）
-const getAllChildCategoryIds = (list: Category[], parentId: string): string[] => {
-  const findCategory = (cats: Category[], id: string): Category | null => {
+  const findChildren = (cats: any[], parentId: string) => {
     for (const cat of cats) {
-      if (cat.categoryId === id) return cat
-      if (cat.children?.length) {
-        const found = findCategory(cat.children, id)
-        if (found) return found
+      if (cat.pCategoryId === parentId || cat.pcategoryId === parentId) {
+        result.push(cat.categoryId)
+        if (cat.children && cat.children.length) {
+          findChildren(cat.children, cat.categoryId)
+        }
+      } else if (cat.children && cat.children.length) {
+        findChildren(cat.children, parentId)
       }
     }
-    return null
   }
 
-  const collectIds = (category: Category): string[] => {
-    let ids = [category.categoryId]
-    if (category.children?.length) {
-      for (const child of category.children) {
-        ids = ids.concat(collectIds(child))
-      }
-    }
-    return ids
-  }
-
-  const target = findCategory(list, parentId)
-  if (target) {
-    // 同时保存分类名称
-    currentCategoryName.value = target.categoryName
-    return collectIds(target)
-  }
-  return [parentId]
+  findChildren(categories.value, catId)
+  return result
 }
 
-// 获取当前选中的分类及其所有子分类ID（优化版）
-const selectedCategoryIds = computed(() => {
-  if (!currentCategoryId.value) return []
-  return getAllChildCategoryIds(categories.value, currentCategoryId.value)
-})
-
-// 前端筛选（合并为一个 computed，减少中间数组创建）
+// 筛选后的商品
 const filteredProducts = computed(() => {
-  let result = [...productList.value]
+  let result = [...allProducts.value]
 
   // 分类筛选
-  if (selectedCategoryIds.value.length > 0) {
-    result = result.filter(p => selectedCategoryIds.value.includes(p.categoryId))
+  if (currentCategoryId.value) {
+    const categoryIds = getCategoryWithChildren(currentCategoryId.value)
+    result = result.filter(p => categoryIds.includes(p.categoryId))
   }
 
   // 关键词搜索
-  if (keyword.value.trim()) {
-    const kw = keyword.value.toLowerCase().trim()
+  if (searchKeyword.value.trim()) {
+    const kw = searchKeyword.value.toLowerCase()
     result = result.filter(p => p.productName.toLowerCase().includes(kw))
   }
 
   // 排序
-  switch (orderBy.value) {
-    case 'price_asc':
-      result.sort((a, b) => (a.price || 0) - (b.price || 0))
-      break
-    case 'price_desc':
-      result.sort((a, b) => (b.price || 0) - (a.price || 0))
-      break
-    case 'sales':
-      result.sort((a, b) => (b.sales || 0) - (a.sales || 0))
-      break
-    default:
-      result.sort((a, b) => {
-        const timeA = a.createTime ? new Date(a.createTime).getTime() : 0
-        const timeB = b.createTime ? new Date(b.createTime).getTime() : 0
-        return timeB - timeA
-      })
-      break
+  if (sortType.value === 'price_asc') {
+    result.sort((a, b) => (a.price || 0) - (b.price || 0))
+  } else if (sortType.value === 'price_desc') {
+    result.sort((a, b) => (b.price || 0) - (a.price || 0))
+  } else if (sortType.value === 'sales') {
+    result.sort((a, b) => (b.sales || 0) - (a.sales || 0))
+  } else {
+    // 默认按创建时间倒序
+    result.sort((a, b) => {
+      const timeA = a.createTime ? new Date(a.createTime).getTime() : 0
+      const timeB = b.createTime ? new Date(b.createTime).getTime() : 0
+      return timeB - timeA
+    })
   }
 
+  totalCount.value = result.length
   return result
 })
 
-// 分页后的数据
-const displayProducts = computed(() => {
-  const start = (pageNum.value - 1) * pageSize.value
+// 分页显示
+const displayList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
   return filteredProducts.value.slice(start, end)
 })
 
-// 更新总数和页码
-watch(filteredProducts, (newVal) => {
-  const newTotal = newVal.length
-  total.value = newTotal
+// 格式化价格
+const formatPrice = (price: number) => {
+  return price?.toFixed(2) || '0.00'
+}
 
-  // 如果当前页超出总页数，回到第一页
-  const maxPage = Math.ceil(newTotal / pageSize.value)
-  if (pageNum.value > maxPage && maxPage > 0) {
-    pageNum.value = 1
-  }
-})
-
-// 当筛选条件变化时重置页码
-watch([selectedCategoryIds, () => keyword.value, () => orderBy.value], () => {
-  if (pageNum.value !== 1) {
-    pageNum.value = 1
-  }
-})
-
-// 加载分类（优化版）
+// 加载分类
 const loadCategories = async () => {
   try {
-    const data = await getCategoryTree()
-    categories.value = data || []
+    const res = await getCategoryTree()
+    categories.value = res?.data || res || []
+    console.log('分类加载成功:', categories.value.length)
   } catch (error) {
     console.error('加载分类失败:', error)
-    ElMessage.warning('分类加载失败，请刷新重试')
   }
 }
 
-// 加载商品（优化版）
+// 加载商品
 const loadProducts = async () => {
   loading.value = true
   try {
-    // 后端分页参数（如果后端支持分页和筛选）
-    const params: any = {
-      pageNum: 1,
-      pageSize: 999, // 获取足够多的数据用于前端筛选
-    }
-
-    // 如果有分类筛选，可以传给后端减少数据传输
-    if (currentCategoryId.value) {
-      params.categoryId = currentCategoryId.value
-    }
-    if (keyword.value) {
-      params.keyword = keyword.value
-    }
-
-    const res = await getProductList(params)
-    productList.value = res.records || []
-
-    // 如果商品数量很大，可以考虑后端分页
-    if (productList.value.length >= 500) {
-      console.warn('商品数量较多，建议实现后端分页筛选')
-    }
+    const res = await getProductList({ pageNum: 1, pageSize: 999 })
+    // 根据实际返回结构取值
+    allProducts.value = res?.records || res?.data?.records || []
+    console.log('商品加载成功:', allProducts.value.length)
   } catch (error) {
     console.error('加载商品失败:', error)
-    ElMessage.error('加载商品失败，请稍后重试')
-    productList.value = []
+    ElMessage.error('加载商品失败')
+    allProducts.value = []
   } finally {
     loading.value = false
   }
@@ -332,23 +266,31 @@ const selectCategory = (categoryId: string) => {
     currentCategoryName.value = ''
   } else {
     currentCategoryId.value = categoryId
+    // 查找分类名称
+    const findName = (cats: any[], id: string): string => {
+      for (const cat of cats) {
+        if (cat.categoryId === id) return cat.categoryName
+        if (cat.children) {
+          const found = findName(cat.children, id)
+          if (found) return found
+        }
+      }
+      return ''
+    }
+    currentCategoryName.value = findName(categories.value, categoryId)
   }
-  // 滚动到顶部
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  currentPage.value = 1
 }
 
 // 改变排序
-const changeOrder = (type: string) => {
-  orderBy.value = type
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+const changeSort = (type: string) => {
+  sortType.value = type
+  currentPage.value = 1
 }
 
 // 搜索
 const handleSearch = () => {
-  if (keyword.value.trim()) {
-    // 可选：记录搜索历史
-    console.log('搜索关键词:', keyword.value)
-  }
+  currentPage.value = 1
 }
 
 // 分页
@@ -357,47 +299,19 @@ const handlePageChange = () => {
 }
 
 const handleSizeChange = () => {
-  pageNum.value = 1
+  currentPage.value = 1
 }
 
-// 跳转商品详情
+// 跳转详情
 const goDetail = (productId: string) => {
   router.push(`/product/${productId}`)
 }
 
-// 监听路由参数变化
-watch(() => route.query, (query) => {
-  let needReload = false
-
-  if (query.categoryId && query.categoryId !== currentCategoryId.value) {
-    currentCategoryId.value = query.categoryId as string
-    needReload = true
-  }
-  if (query.keyword && query.keyword !== keyword.value) {
-    keyword.value = query.keyword as string
-    needReload = true
-  }
-
-  if (needReload) {
-    pageNum.value = 1
-    loadProducts()
-  }
-}, { immediate: true, deep: true })
-
 // 初始化
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadProducts()])
+  await loadCategories()
+  await loadProducts()
 })
-
-// 开发环境调试（可选）
-if (import.meta.env.DEV) {
-  (window as any).__debug__ = {
-    getCategories: () => categories.value,
-    getProducts: () => productList.value,
-    getCurrentCategoryId: () => currentCategoryId.value,
-    getFilteredProducts: () => filteredProducts.value
-  }
-}
 </script>
 
 <style scoped>
@@ -447,9 +361,50 @@ if (import.meta.env.DEV) {
 .category-tree {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: calc(100vh - 120px);
-  overflow-y: auto;
+  gap: 12px;
+}
+
+.category-item {
+  cursor: pointer;
+}
+
+.category-name {
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: all 0.3s;
+}
+
+.category-name:hover {
+  background-color: #f5f7fa;
+  color: #409eff;
+}
+
+.category-name.active {
+  background-color: #ecf5ff;
+  color: #409eff;
+}
+
+.sub-categories {
+  margin-left: 20px;
+  margin-top: 4px;
+}
+
+.sub-category-name {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.sub-category-name:hover {
+  background-color: #f5f7fa;
+  color: #409eff;
+}
+
+.sub-category-name.active {
+  background-color: #ecf5ff;
+  color: #409eff;
 }
 
 /* 主内容区 */
@@ -471,29 +426,19 @@ if (import.meta.env.DEV) {
 /* 排序栏 */
 .sort-bar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  gap: 24px;
   background: white;
   padding: 12px 20px;
   border-radius: 8px;
   margin-bottom: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-
-.sort-left {
-  display: flex;
-  gap: 24px;
-}
-
-.sort-right {
-  color: #999;
-  font-size: 14px;
+  position: relative;
 }
 
 .sort-item {
   cursor: pointer;
   color: #666;
-  transition: all 0.3s;
+  transition: color 0.3s;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -504,7 +449,11 @@ if (import.meta.env.DEV) {
   color: #409eff;
 }
 
-.result-count {
+.sort-right {
+  position: absolute;
+  right: 20px;
+  top: 12px;
+  color: #999;
   font-size: 14px;
 }
 
@@ -531,7 +480,6 @@ if (import.meta.env.DEV) {
 }
 
 .product-image {
-  position: relative;
   height: 220px;
   overflow: hidden;
   background-color: #f5f5f5;
@@ -548,36 +496,11 @@ if (import.meta.env.DEV) {
   transform: scale(1.05);
 }
 
-.product-tags {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  gap: 8px;
-}
-
-.tag {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.tag.hot {
-  background: linear-gradient(135deg, #ff6b6b, #ff8e8e);
-  color: white;
-}
-
-.tag.new {
-  background: linear-gradient(135deg, #4facfe, #00f2fe);
-  color: white;
-}
-
 .product-info {
   padding: 15px;
 }
 
-.product-title {
+.product-info h3 {
   font-size: 16px;
   margin-bottom: 8px;
   color: #333;
@@ -586,35 +509,16 @@ if (import.meta.env.DEV) {
   white-space: nowrap;
 }
 
-.product-price {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.product-price .price {
+.product-info .price {
   color: #ff6b6b;
   font-size: 20px;
   font-weight: bold;
+  margin-bottom: 4px;
 }
 
-.product-price .original-price {
-  color: #999;
-  font-size: 14px;
-  text-decoration: line-through;
-}
-
-.product-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.product-info .sales {
   font-size: 12px;
   color: #999;
-}
-
-.product-meta .stock.low-stock {
-  color: #ff6b6b;
 }
 
 /* 分页 */
@@ -634,28 +538,17 @@ if (import.meta.env.DEV) {
     width: 100%;
   }
 
-  .filter-box {
-    position: static;
-  }
-
   .product-grid {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
   }
 
   .product-image {
     height: 160px;
   }
 
-  .sort-bar {
-    flex-direction: column;
-    gap: 10px;
-    align-items: flex-start;
-  }
-
-  .sort-left {
-    flex-wrap: wrap;
-    gap: 16px;
+  .sort-right {
+    position: static;
+    margin-left: auto;
   }
 }
 </style>

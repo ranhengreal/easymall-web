@@ -3,12 +3,12 @@
     <!-- 轮播图 -->
     <div class="banner">
       <el-carousel height="400px" indicator-position="outside">
-        <el-carousel-item v-for="(item, index) in banners" :key="index">
-          <div class="banner-item" :style="{ backgroundImage: `url(${item.image})` }">
+        <el-carousel-item v-for="item in banners" :key="item.id">
+          <div class="banner-item" :style="{ backgroundImage: `url(${getImageUrl(item.imageUrl)})` }">
             <div class="banner-content">
               <h2>{{ item.title }}</h2>
-              <p>{{ item.subtitle }}</p>
-              <el-button type="primary" @click="goProductList">立即抢购</el-button>
+              <p>{{ item.subtitle || '限时优惠，不容错过' }}</p>
+              <el-button type="primary" @click="goToLink(item.linkUrl)">立即抢购</el-button>
             </div>
           </div>
         </el-carousel-item>
@@ -65,20 +65,26 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getProductList } from '@/api/product'
 import { getCategoryTree } from '@/api/category'
+import { getBannerList } from '@/api/banner'
 import { getImageUrl } from '@/utils/image'
 import type { Product, Category } from '@/api/product'
-
+import type { Banner } from '@/api/banner'
 
 const router = useRouter()
 
-const banners = ref([
-  { image: 'https://picsum.photos/1200/400?random=1', title: '春季大促', subtitle: '全场商品5折起' },
-  { image: 'https://picsum.photos/1200/400?random=2', title: '新品上市', subtitle: '最新潮流单品' },
-  { image: 'https://picsum.photos/1200/400?random=3', title: '限时秒杀', subtitle: '手慢无' }
-])
-
+const banners = ref<Banner[]>([])
 const categories = ref<Category[]>([])
 const hotProducts = ref<Product[]>([])
+
+// 加载轮播图（从后端获取）
+const loadBanners = async () => {
+  try {
+    const res = await getBannerList()
+    banners.value = res || []
+  } catch (error) {
+    console.error('加载轮播图失败:', error)
+  }
+}
 
 // 加载分类
 const loadCategories = async () => {
@@ -103,6 +109,13 @@ const loadHotProducts = async () => {
   }
 }
 
+// 跳转链接
+const goToLink = (linkUrl: string) => {
+  if (linkUrl) {
+    router.push(linkUrl)
+  }
+}
+
 // 跳转分类
 const goCategory = (categoryId: string) => {
   router.push(`/product/list?categoryId=${categoryId}`)
@@ -119,6 +132,7 @@ const goProductList = () => {
 }
 
 onMounted(() => {
+  loadBanners()
   loadCategories()
   loadHotProducts()
 })
